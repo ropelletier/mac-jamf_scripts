@@ -18,17 +18,17 @@ get_logged_in_user() {
     stat -f "%Su" /dev/console
 }
 
-# Displays a dialog with a message. Supports an optional cancel button.
-# Returns 0 if the user clicked the primary button, 1 if they cancelled.
+# Displays a dialog. $1=message $2=primary button $3=cancel button label (omit to hide cancel).
+# Returns 0 if primary clicked, 1 if cancelled.
 show_dialog() {
     local message="$1"
     local ok_button="${2:-OK}"
-    local show_cancel="${3:-false}"
+    local cancel_label="$3"
 
     local buttons cancel_clause
-    if [[ "$show_cancel" == "true" ]]; then
-        buttons="{\"Cancel\", \"$ok_button\"}"
-        cancel_clause="cancel button \"Cancel\""
+    if [[ -n "$cancel_label" ]]; then
+        buttons="{\"$cancel_label\", \"$ok_button\"}"
+        cancel_clause="cancel button \"$cancel_label\""
     else
         buttons="{\"$ok_button\"}"
         cancel_clause=""
@@ -78,20 +78,20 @@ if ! dscl . -authonly "$CURRENT_USER" "$DEFAULT_PASSWORD" &>/dev/null; then
     exit 0
 fi
 
-# Show initial warning — exit if user chooses "Remind Me Later"
-show_dialog "Your account is using a temporary default password.\n\nYou will be reminded at every login until your password is changed." "Change Password" "true" || exit 0
+# Show initial warning — exit if user clicks "Remind Me Later"
+show_dialog "Your account is using a temporary default password.\n\nYou will be reminded at every login until your password is changed." "Change Password" "Remind Me Later" || exit 0
 
 while true; do
     NEW_PASS=$(prompt_hidden "Enter your NEW password:")
     [[ $? -ne 0 ]] && exit 0
 
     if [[ -z "$NEW_PASS" ]]; then
-        show_dialog "Password cannot be empty. Please try again." "Try Again" "true" || exit 0
+        show_dialog "Password cannot be empty. Please try again." "Try Again" "Cancel" || exit 0
         continue
     fi
 
     if [[ "$NEW_PASS" == "$DEFAULT_PASSWORD" ]]; then
-        show_dialog "Your new password cannot match the temporary password.\nPlease choose a different one." "Try Again" "true" || exit 0
+        show_dialog "Your new password cannot match the temporary password.\nPlease choose a different one." "Try Again" "Cancel" || exit 0
         continue
     fi
 
@@ -99,7 +99,7 @@ while true; do
     [[ $? -ne 0 ]] && exit 0
 
     if [[ "$NEW_PASS" != "$CONFIRM_PASS" ]]; then
-        show_dialog "Passwords do not match. Please try again." "Try Again" "true" || exit 0
+        show_dialog "Passwords do not match. Please try again." "Try Again" "Cancel" || exit 0
         continue
     fi
 
@@ -110,7 +110,7 @@ while true; do
             2>/dev/null
         break
     else
-        show_dialog "Failed to change password. Please try again." "Try Again" "true" || exit 0
+        show_dialog "Failed to change password. Please try again." "Try Again" "Cancel" || exit 0
     fi
 done
 
