@@ -1,30 +1,29 @@
 #!/bin/bash
-# remove_dock_items.sh
+# JAMF_dock_deploy.sh
 #
-# Manages the Dock for the current user by adding and removing items.
-# Configuration is loaded from a JSON file hosted on GitHub.
-# Per-machine exceptions are supported by serial number.
+# Single-file JAMF deployment script for Dock management.
+# Paste the entire contents of this file into JAMF Pro > Scripts > Script tab.
 #
-# Uses only tools built into macOS (PlistBuddy, plutil, curl) — no third-party
-# dependencies required.
-#
-# JAMF usage: deploy via Policy > Scripts, trigger at login or enrollment.
+# CONFIGURE the sections marked with <-- before uploading to JAMF.
+# No external dependencies — uses only tools built into macOS.
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-# Raw GitHub URL to your dock_config.json file.
+# Optional: Raw GitHub URL to a dock_config.json for centralized config.
+# Leave empty to use only the lists defined below.
 # Example: https://raw.githubusercontent.com/ropelletier/mac-jamf_scripts/main/Dock%20Management/dock_config.json
-CONFIG_URL=""
+CONFIG_URL=""   # <-- SET THIS or leave empty
 
 PLISTBUDDY="/usr/libexec/PlistBuddy"
 
-# ── Fallback lists ─────────────────────────────────────────────────────────────
-# Used only if CONFIG_URL is empty or the file cannot be fetched.
-
+# ── Items to add  <-- EDIT THIS LIST ──────────────────────────────────────────
+# Full /Applications path to each app. Added in order listed.
 FALLBACK_ADD=(
     "/Applications/Google Chrome.app"
 )
 
+# ── Items to remove  <-- EDIT THIS LIST ───────────────────────────────────────
+# App name exactly as shown in the Dock (case-sensitive).
 FALLBACK_REMOVE=(
     "Maps"
     "Messages"
@@ -42,12 +41,17 @@ FALLBACK_REMOVE=(
     "Freeform"
 )
 
+# ── Serial number exceptions  <-- EDIT THIS LIST ──────────────────────────────
+# Machines listed here will be skipped entirely. Add one serial per line.
+SKIP_SERIALS=(
+    "SERIALNUMBER1"
+    "SERIALNUMBER2"
+)
+
 # ── Dock helper functions ───────────────────────────────────────────────────────
 
-# Returns 0 if an app label is already in the Dock, 1 if not.
 dock_has_item() {
-    local label="$1"
-    local count i item_label
+    local label="$1" count i item_label
     count=$("$PLISTBUDDY" -c "Print :persistent-apps:" "$DOCK_PLIST" 2>/dev/null | grep -c "Dict")
     for ((i=0; i<count; i++)); do
         item_label=$("$PLISTBUDDY" -c "Print :persistent-apps:$i:tile-data:file-label" "$DOCK_PLIST" 2>/dev/null)
@@ -56,12 +60,9 @@ dock_has_item() {
     return 1
 }
 
-# Removes an app from the Dock by its label.
 dock_remove_item() {
-    local label="$1"
-    local count i item_label
+    local label="$1" count i item_label
     count=$("$PLISTBUDDY" -c "Print :persistent-apps:" "$DOCK_PLIST" 2>/dev/null | grep -c "Dict")
-    # Iterate in reverse so index removal doesn't shift remaining items
     for ((i=count-1; i>=0; i--)); do
         item_label=$("$PLISTBUDDY" -c "Print :persistent-apps:$i:tile-data:file-label" "$DOCK_PLIST" 2>/dev/null)
         if [[ "$item_label" == "$label" ]]; then
@@ -72,13 +73,10 @@ dock_remove_item() {
     return 1
 }
 
-# Adds an app to the end of the Dock by its full path.
 dock_add_item() {
-    local app_path="$1"
-    local app_name idx
+    local app_path="$1" app_name idx
     app_name=$(basename "$app_path" .app)
     idx=$("$PLISTBUDDY" -c "Print :persistent-apps:" "$DOCK_PLIST" 2>/dev/null | grep -c "Dict")
-
     "$PLISTBUDDY" \
         -c "Add :persistent-apps: dict" \
         -c "Add :persistent-apps:$idx:tile-type string application-tile" \
@@ -92,22 +90,17 @@ dock_add_item() {
 
 # ── Config loader ───────────────────────────────────────────────────────────────
 
-# Downloads dock_config.json, converts it to plist, applies serial exceptions,
-# and populates ITEMS_TO_ADD and ITEMS_TO_REMOVE. Returns 1 on failure.
 load_config() {
-    local serial="$1"
-    local tmp_json tmp_plist
-
+    local serial="$1" tmp_json tmp_plist
     tmp_json=$(mktemp /tmp/dock_config_XXXXXX.json)
     tmp_plist=$(mktemp /tmp/dock_config_XXXXXX.plist)
 
     if ! curl -fsSL "$CONFIG_URL" -o "$tmp_json" 2>/dev/null; then
-        echo "Warning: Could not fetch config from $CONFIG_URL. Using fallback lists."
+        echo "Warning: Could not fetch config from GitHub. Using fallback lists."
         rm -f "$tmp_json" "$tmp_plist"
         return 1
     fi
 
-    # Convert JSON to XML plist so PlistBuddy can read it
     if ! plutil -convert xml1 "$tmp_json" -o "$tmp_plist" 2>/dev/null; then
         echo "Warning: Config file is not valid JSON. Using fallback lists."
         rm -f "$tmp_json" "$tmp_plist"
@@ -115,34 +108,30 @@ load_config() {
     fi
     rm -f "$tmp_json"
 
-    # Check for skip exception
+    # Check for skip exception in config file
     local skip
     skip=$("$PLISTBUDDY" -c "Print :exceptions:$serial:skip" "$tmp_plist" 2>/dev/null)
     if [[ "$skip" == "true" ]]; then
-        echo "Serial $serial is in the exceptions list with skip=true. No changes will be made."
+        echo "Serial $serial is marked skip=true in config. No changes will be made."
         rm -f "$tmp_plist"
         exit 0
     fi
 
-    # Determine which add/remove keys to read (exception override or global)
     local add_key="add" remove_key="remove"
     "$PLISTBUDDY" -c "Print :exceptions:$serial:add:"    "$tmp_plist" &>/dev/null && add_key="exceptions:$serial:add"
     "$PLISTBUDDY" -c "Print :exceptions:$serial:remove:" "$tmp_plist" &>/dev/null && remove_key="exceptions:$serial:remove"
 
-    # Read add list
-    local add_count i item
-    add_count=$("$PLISTBUDDY" -c "Print :$add_key:" "$tmp_plist" 2>/dev/null | grep -c "string")
+    local count i item
+    count=$("$PLISTBUDDY" -c "Print :$add_key:" "$tmp_plist" 2>/dev/null | grep -c "string")
     ITEMS_TO_ADD=()
-    for ((i=0; i<add_count; i++)); do
+    for ((i=0; i<count; i++)); do
         item=$("$PLISTBUDDY" -c "Print :$add_key:$i" "$tmp_plist" 2>/dev/null)
         [[ -n "$item" ]] && ITEMS_TO_ADD+=("$item")
     done
 
-    # Read remove list
-    local remove_count
-    remove_count=$("$PLISTBUDDY" -c "Print :$remove_key:" "$tmp_plist" 2>/dev/null | grep -c "string")
+    count=$("$PLISTBUDDY" -c "Print :$remove_key:" "$tmp_plist" 2>/dev/null | grep -c "string")
     ITEMS_TO_REMOVE=()
-    for ((i=0; i<remove_count; i++)); do
+    for ((i=0; i<count; i++)); do
         item=$("$PLISTBUDDY" -c "Print :$remove_key:$i" "$tmp_plist" 2>/dev/null)
         [[ -n "$item" ]] && ITEMS_TO_REMOVE+=("$item")
     done
@@ -153,25 +142,30 @@ load_config() {
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
-# Get the currently logged-in user
 CURRENT_USER=$(stat -f "%Su" /dev/console)
-
 if [[ -z "$CURRENT_USER" || "$CURRENT_USER" == "root" ]]; then
-    echo "ERROR: No user logged in or running as root user."
+    echo "ERROR: No user logged in or running as root."
     exit 1
 fi
 
 DOCK_PLIST="/Users/$CURRENT_USER/Library/Preferences/com.apple.dock.plist"
-
 if [[ ! -f "$DOCK_PLIST" ]]; then
-    echo "ERROR: Dock plist not found for user $CURRENT_USER"
+    echo "ERROR: Dock plist not found for $CURRENT_USER"
     exit 1
 fi
 
-# Load config from GitHub or fall back to hardcoded lists
 SERIAL=$(system_profiler SPHardwareDataType | awk '/Serial Number/{print $NF}')
 echo "Machine serial: $SERIAL"
 
+# Check SKIP_SERIALS list
+for SKIP in "${SKIP_SERIALS[@]}"; do
+    if [[ "$SERIAL" == "$SKIP" ]]; then
+        echo "Serial $SERIAL is in the skip list. No changes will be made."
+        exit 0
+    fi
+done
+
+# Load config from GitHub or fall back to hardcoded lists
 if [[ -n "$CONFIG_URL" ]] && load_config "$SERIAL"; then
     echo "Config loaded from GitHub."
 else
@@ -180,37 +174,28 @@ else
     ITEMS_TO_REMOVE=("${FALLBACK_REMOVE[@]}")
 fi
 
-echo "Updating Dock for user: $CURRENT_USER"
+echo "Updating Dock for: $CURRENT_USER"
 
-# Add items
 for APP in "${ITEMS_TO_ADD[@]}"; do
     [[ -z "$APP" ]] && continue
     if [[ ! -d "$APP" ]]; then
-        echo "  App not installed (skipped): $APP"
-        continue
-    fi
-    if dock_has_item "$(basename "$APP" .app)"; then
+        echo "  Not installed (skipped): $APP"
+    elif dock_has_item "$(basename "$APP" .app)"; then
         echo "  Already in Dock (skipped): $(basename "$APP" .app)"
     else
-        dock_add_item "$APP"
-        echo "  Added: $(basename "$APP" .app)"
+        dock_add_item "$APP" && echo "  Added: $(basename "$APP" .app)"
     fi
 done
 
-# Remove items
 for ITEM in "${ITEMS_TO_REMOVE[@]}"; do
     [[ -z "$ITEM" ]] && continue
     if dock_has_item "$ITEM"; then
-        dock_remove_item "$ITEM"
-        echo "  Removed: $ITEM"
+        dock_remove_item "$ITEM" && echo "  Removed: $ITEM"
     else
         echo "  Not found (skipped): $ITEM"
     fi
 done
 
-# Restart the Dock to apply changes
-CURRENT_UID=$(id -u "$CURRENT_USER")
-launchctl asuser "$CURRENT_UID" killall Dock
-
+launchctl asuser "$(id -u "$CURRENT_USER")" killall Dock
 echo "Done. Dock restarted for $CURRENT_USER."
 exit 0
