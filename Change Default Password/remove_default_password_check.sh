@@ -9,9 +9,17 @@
 PLIST_LABEL="com.admin.checkdefaultpassword"
 PLIST_PATH="/Library/LaunchAgents/$PLIST_LABEL.plist"
 SCRIPT_PATH="/usr/local/bin/check_default_password.sh"
+LOCAL_COPY="/usr/local/bin/remove_default_password_check.sh"
 
 CURRENT_USER=$(stat -f "%Su" /dev/console)
 CURRENT_UID=$(id -u "$CURRENT_USER" 2>/dev/null)
+
+# Save a local copy of this script so it can be run manually later
+if [[ "$0" != "$LOCAL_COPY" ]]; then
+    cp "$0" "$LOCAL_COPY"
+    chmod 755 "$LOCAL_COPY"
+    echo "Removal script saved to $LOCAL_COPY"
+fi
 
 # Unload and remove the LaunchAgent
 if [[ -f "$PLIST_PATH" ]]; then
