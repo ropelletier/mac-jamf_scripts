@@ -2,7 +2,8 @@
 # check_default_password.sh
 #
 # Checks if the current user's password matches a known default/test password.
-# If it does, forces the user to change it before proceeding.
+# If it does, prompts the user to change it. The user may dismiss the prompt
+# and will be reminded again at every login until the password is changed.
 #
 # DEPLOY via JAMF: see JAMF_Deployment_Instructions.md
 #
@@ -25,17 +26,36 @@ show_dialog() {
         2>/dev/null
 }
 
+# Shows the initial warning with "Change Password" and "Remind Me Later" buttons.
+# Returns 0 if the user chooses to change, 1 if they dismiss.
+prompt_initial() {
+    local result
+    result=$(osascript \
+        -e "tell application \"System Events\" to activate" \
+        -e "display dialog \"Your account is using a temporary default password.\n\nYou will be reminded at every login until your password is changed.\" buttons {\"Remind Me Later\", \"Change Password\"} default button \"Change Password\" with title \"Password Change Required\" with icon caution" \
+        2>/dev/null)
+    [[ "$result" == *"Change Password"* ]] && return 0 || return 1
+}
+
+# Prompts for a hidden password input with a Cancel option.
+# Prints the entered text and returns 0, or returns 1 if the user cancels.
 prompt_hidden() {
     local prompt="$1"
-    osascript <<EOF 2>/dev/null
+    local result
+    result=$(osascript <<EOF 2>/dev/null
 tell application "System Events"
     activate
     set r to display dialog "$prompt" with hidden answer default answer "" ¬
-        buttons {"Continue"} default button "Continue" ¬
+        buttons {"Cancel", "Continue"} default button "Continue" cancel button "Cancel" ¬
         with title "Password Change Required" with icon caution
     return text returned of r
 end tell
 EOF
+    )
+    local exit_code=$?
+    [[ $exit_code -ne 0 ]] && return 1
+    echo "$result"
+    return 0
 }
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -53,11 +73,12 @@ if ! dscl . -authonly "$CURRENT_USER" "$DEFAULT_PASSWORD" &>/dev/null; then
     exit 0
 fi
 
-# Password matches the default — enforce a change
-show_dialog "Your account is using a temporary default password.\n\nYou must set a new password before you can continue." "OK"
+# Show initial warning — exit if user chooses "Remind Me Later"
+prompt_initial || exit 0
 
 while true; do
     NEW_PASS=$(prompt_hidden "Enter your NEW password:")
+    [[ $? -ne 0 ]] && exit 0  # User cancelled
 
     if [[ -z "$NEW_PASS" ]]; then
         show_dialog "Password cannot be empty. Please try again." "OK"
@@ -70,6 +91,7 @@ while true; do
     fi
 
     CONFIRM_PASS=$(prompt_hidden "Confirm your NEW password:")
+    [[ $? -ne 0 ]] && exit 0  # User cancelled
 
     if [[ "$NEW_PASS" != "$CONFIRM_PASS" ]]; then
         show_dialog "Passwords do not match. Please try again." "OK"
