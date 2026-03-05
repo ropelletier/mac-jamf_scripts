@@ -42,39 +42,58 @@ DEFAULT_PASSWORD="$DEFAULT_PASSWORD"
 get_logged_in_user() { stat -f "%Su" /dev/console; }
 
 show_dialog() {
-    local message="\$1" button="\${2:-OK}"
+    local message="\$1" ok_button="\${2:-OK}" show_cancel="\${3:-false}"
+    local buttons cancel_clause
+    if [[ "\$show_cancel" == "true" ]]; then
+        buttons="{\"Cancel\", \"\$ok_button\"}"
+        cancel_clause="cancel button \"Cancel\""
+    else
+        buttons="{\"\$ok_button\"}"
+        cancel_clause=""
+    fi
     osascript -e "tell application \"System Events\" to activate" \
-              -e "display dialog \"\$message\" buttons {\"\$button\"} default button \"\$button\" with title \"Password Change Required\" with icon caution" 2>/dev/null
+              -e "display dialog \"\$message\" buttons \$buttons default button \"\$ok_button\" \$cancel_clause with title \"Password Change Required\" with icon caution" &>/dev/null
+    return \$?
 }
 
 prompt_hidden() {
-    osascript <<EOF 2>/dev/null
+    local result exit_code
+    result=\$(osascript <<EOF 2>/dev/null
 tell application "System Events"
     activate
-    set r to display dialog "\$1" with hidden answer default answer "" buttons {"Continue"} default button "Continue" with title "Password Change Required" with icon caution
+    set r to display dialog "\$1" with hidden answer default answer "" ¬
+        buttons {"Cancel", "Continue"} default button "Continue" cancel button "Cancel" ¬
+        with title "Password Change Required" with icon caution
     return text returned of r
 end tell
 EOF
+    )
+    exit_code=\$?
+    [[ \$exit_code -ne 0 ]] && return 1
+    echo "\$result"
+    return 0
 }
 
 CURRENT_USER=\$(get_logged_in_user)
 [[ -z "\$CURRENT_USER" || "\$CURRENT_USER" == "root" ]] && exit 0
 dscl . -authonly "\$CURRENT_USER" "\$DEFAULT_PASSWORD" &>/dev/null || exit 0
 
-show_dialog "Your account is using a temporary default password.\n\nYou must set a new password before you can continue." "OK"
+show_dialog "Your account is using a temporary default password.\n\nYou will be reminded at every login until your password is changed." "Change Password" "true" || exit 0
 
 while true; do
     NEW_PASS=\$(prompt_hidden "Enter your NEW password:")
-    [[ -z "\$NEW_PASS" ]] && { show_dialog "Password cannot be empty. Please try again." "OK"; continue; }
-    [[ "\$NEW_PASS" == "\$DEFAULT_PASSWORD" ]] && { show_dialog "New password cannot match the temporary password." "OK"; continue; }
+    [[ \$? -ne 0 ]] && exit 0
+    [[ -z "\$NEW_PASS" ]] && { show_dialog "Password cannot be empty. Please try again." "Try Again" "true" || exit 0; continue; }
+    [[ "\$NEW_PASS" == "\$DEFAULT_PASSWORD" ]] && { show_dialog "New password cannot match the temporary password." "Try Again" "true" || exit 0; continue; }
     CONFIRM_PASS=\$(prompt_hidden "Confirm your NEW password:")
-    [[ "\$NEW_PASS" != "\$CONFIRM_PASS" ]] && { show_dialog "Passwords do not match. Please try again." "OK"; continue; }
+    [[ \$? -ne 0 ]] && exit 0
+    [[ "\$NEW_PASS" != "\$CONFIRM_PASS" ]] && { show_dialog "Passwords do not match. Please try again." "Try Again" "true" || exit 0; continue; }
     if dscl . -passwd "/Users/\$CURRENT_USER" "\$DEFAULT_PASSWORD" "\$NEW_PASS" &>/dev/null; then
         osascript -e "tell application \"System Events\" to activate" \
                   -e "display dialog \"Your password has been changed successfully.\" buttons {\"OK\"} default button \"OK\" with title \"Success\" with icon note" 2>/dev/null
         break
     else
-        show_dialog "Failed to change password. Please try again." "OK"
+        show_dialog "Failed to change password. Please try again." "Try Again" "true" || exit 0
     fi
 done
 exit 0
