@@ -1,0 +1,77 @@
+{
+    "_comment": "Dock management config. Host this file on GitHub and set CONFIG_URL in remove_dock_items.sh to the raw URL.",
+
+    "add": [
+        "/Applications/Google Chrome.app"
+    ],
+
+    "remove": [
+        "Maps",
+        "Messages",
+        "Photos",
+        "FaceTime",
+        "Contacts",
+        "Calendar",
+        "Reminders",
+        "Notes",
+        "TV",
+        "Music",
+        "Podcasts",
+        "News",
+        "App Store",
+        "Freeform"
+    ],
+
+    "exceptions": {
+
+        "SERIALNUMBER1": {
+            "_comment": "Executive machine — leave Dock untouched",
+            "skip": true
+        },
+
+        "SERIALNUMBER2": {
+            "_comment": "Teacher machine — keep Calendar and add Slack, override both lists entirely",
+            "add": [
+                "/Applications/Google Chrome.app",
+                "/Applications/Slack.app"
+            ],
+            "remove": [
+                "Maps",
+                "Photos",
+                "FaceTime",
+                "Contacts",
+                "Reminders",
+                "Notes",
+                "TV",
+                "Music",
+                "Podcasts",
+                "News",
+                "App Store",
+                "Freeform"
+            ]
+        },
+
+        "SERIALNUMBER3": {
+            "_comment": "Lab machine — minimal dock, add nothing",
+            "add": [],
+            "remove": [
+                "Maps",
+                "Messages",
+                "Photos",
+                "FaceTime",
+                "Contacts",
+                "Calendar",
+                "Reminders",
+                "Notes",
+                "TV",
+                "Music",
+                "Podcasts",
+                "News",
+                "App Store",
+                "Freeform",
+                "Safari"
+            ]
+        }
+
+    }
+}
