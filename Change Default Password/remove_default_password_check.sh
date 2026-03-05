@@ -43,11 +43,22 @@ fi
 
 # Kill any running instance of the script and dismiss any open dialog
 if [[ -n "$CURRENT_USER" && "$CURRENT_USER" != "root" ]]; then
-    # Kill the enforcement script process (also kills child osascript processes)
-    pkill -KILL -u "$CURRENT_USER" -f "check_default_password.sh" 2>/dev/null
-    # Kill all osascript processes for the user — this closes any open dialogs
+    # Step 1: Kill the bash script first so it cannot spawn new dialogs
+    pkill -KILL -u "$CURRENT_USER" -f "check_default_password" 2>/dev/null
+    sleep 1
+
+    # Step 2: Kill all osascript processes for the user
     pkill -KILL -u "$CURRENT_USER" osascript 2>/dev/null
-    echo "Killed any active password prompt for $CURRENT_USER."
+
+    # Step 3: Kill System Events for the user — it renders the dialog windows
+    launchctl asuser "$CURRENT_UID" pkill -KILL -f "System Events" 2>/dev/null
+    pkill -KILL -u "$CURRENT_USER" -f "System Events" 2>/dev/null
+
+    # Step 4: Final sweep in case any osascript survived
+    sleep 1
+    pkill -KILL -u "$CURRENT_USER" osascript 2>/dev/null
+
+    echo "Killed all active password prompts for $CURRENT_USER."
 fi
 
 echo "Done."
